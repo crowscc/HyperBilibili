@@ -65,6 +65,9 @@
       },
       "pages/about": {
         "component": "about"
+      },
+      "pages/message": {
+        "component": "message"
       }
     }
   },

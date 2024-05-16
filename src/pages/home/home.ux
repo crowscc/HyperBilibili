@@ -25,7 +25,7 @@
             <text class="feature_text">我的收藏</text>
             <text class="feature_arrow">></text>
         </div>
-        <div class="feature" style="margin-top: 240px" @click="ShowWIP()">
+        <div class="feature" style="margin-top: 240px" @click="OpenMyMessagePage()">
           <div class="feature_icon_div">
               <image class="feature_icon" src="/common/icons8-chat-message-96.png"></image>
           </div>
@@ -98,6 +98,11 @@ export default {
     ShowWIP(){
       prompt.showToast({
         message: "该功能还未开发完毕，请更新版本后再来看看吧！"
+      })
+    },
+    OpenMyMessagePage(){
+      router.push({
+        uri: "pages/message"
       })
     },
     OpenMyFoldersPage(){
