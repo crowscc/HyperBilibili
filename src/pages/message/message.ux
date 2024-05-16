@@ -1,48 +1,42 @@
 <template>
     <div class="historycontent-page">
-        <div class="content" for="(index, session) in list" tid="uniqueId" class="content-container">
+        <image if="{{loading}}" class="loading" src="/common/icons8-loading-96.png"></image>
+       <div if="{{!loading}}" class="content" for="(index, session) in list" tid="uniqueId" class="content-container">
             <image class="avatar" src="{{session.face}}@300w_300h" alt="/common/icons8-loading-96.png"></image>
             <div class="text-container">
                 <text class="content_title">{{ session.title }}</text>
                 <text class="content_subtitle">{{ session.subtitle }}</text>
             </div>
         </div>
-        <div class="pagecontrol">
-            <input type="button" value="上一页" style="font-size: 22px; width: 90px; height: 40px" @click="BackPage()"></input>
-            <text style="width: 30px;"> </text>
-            <text style="color: white; font-size: 24px">{{pn}}/{{maxpn}}</text>
-            <text style="width: 30px;"> </text>
-            <input type="button" value="下一页" style="font-size: 22px; width: 90px; height: 40px" @click="NextPage()"></input>
+        <div style="flex: 1;"></div> <!-- 添加这个元素使得下一页按钮保持在底部 -->
+        <div class="pagecontrol" if="{{!loading}}">
+            <input type="button" value="下一页" style="font-size: 22px; width: 90px; height: 40px" @click="NextPage"></input>
         </div>
-        <text style="height: 50px; margin-top: 1620px"></text>
     </div>
 </template>
 
 <script>
 import prompt from '@system.prompt'
-import router from '@system.router'
-export default{
-    public:{
-        
-    },
+export default {
+    public: {},
     private: {
-        pn: 1,
-        maxpn: 1,
-        ifInterval: null,
         list: [],
-        NextPage(){
-            if(this.pn >= this.maxpn){
+        loading: true, // 初始化加载状态为true
+        endTs: null, // 保存最后一个消息的时间戳
+        NextPage() {
+            if (this.endTs) {
+                this.loading = true;
+                this.FetchSessionList(this.endTs).then(() => {
+                    this.loading = false;
+                });
+            } else {
                 prompt.showToast({
                     message: "已经到底啦！"
-                })
-            }
-            else{
-                this.pn = this.pn + 1
-                this.UpdateFavList()
+                });
             }
         },
-        async FetchSessionList(endTs = null) {
-            try {
+        FetchSessionList(endTs = null) {
+            return new Promise((resolve, reject) => {
                 const params = {
                     'session_type': 1,
                     'group_fold': 1,
@@ -60,56 +54,75 @@ export default{
                     .join('&');
 
                 const url = `https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions?${queryString}`;
-                console.log("私信会话列表url：", url);
+                console.debug("私信会话列表url：", url);
 
-                const response = await this.$app.$def.bilirequest.SendBiliGET(url, "json");
-                console.log("私信会话列表：", response);
+                this.$app.$def.bilirequest.SendBiliGET(url, "json").then(response => {
+                    console.debug("私信会话列表：", response);
 
-                if (response.code === 0) {
-                    const sessionList = response.data.session_list;
-                    // 是否有下一页
-                    const hasMore = response.data.has_more;
-                    const userIds = sessionList.map(session => session.talker_id);
-                    const userInfo = await this.FetchUserInfo(userIds);
-                    this.list = sessionList.map(session => ({
-                        uniqueId: session.talker_id,
-                        face: userInfo[session.talker_id]?.face, // 添加 face 字段
-                        title: userInfo[session.talker_id]?.name || `会话 ${session.talker_id}`,
-                        subtitle: this.parseMessageContent(session)
-                    }));
-                    console.log("封装后的会话列表：", this.list);
-                } else {
-                    console.error("请求错误：", response.message);
-                }
-            } catch (err) {
-                console.error("FetchSessionList 捕获到的错误：", err);
-            }
-        },
-        async FetchUserInfo(uids) {
-            const params = {
-                'uids': uids.join(','),
-                'build': 0,
-                'mobi_app': 'web'
-            };
-            const queryString = Object.keys(params)
-                .map(key => encodeURIComponent(key) + '=' + encodeURIComponent(params[key]))
-                .join('&');
-            const url = `https://api.vc.bilibili.com/account/v1/user/cards?${queryString}`;
-            console.log("用户信息列表url：", url);
+                    if (response.code === 0) {
+                        const sessionList = response.data.session_list;
+                        const hasMore = response.data.has_more;
+                        this.endTs = sessionList.length ? sessionList[sessionList.length - 1].session_ts : null;
 
-            const response = await this.$app.$def.bilirequest.SendBiliGET(url, "json");
-            console.log("用户信息列表：", response);
+                        const userIds = sessionList.map(session => session.talker_id);
+                        this.FetchUserInfo(userIds).then(userInfo => {
+                            this.list = sessionList.map(session => ({
+                                uniqueId: session.talker_id,
+                                face: userInfo[session.talker_id]?.face, // 添加 face 字段
+                                title: userInfo[session.talker_id]?.name || `会话 ${session.talker_id}`,
+                                subtitle: this.parseMessageContent(session)
+                            }));
+                            console.debug("封装后的会话列表：", this.list);
 
-            if (response.code === 0) {
-                const userInfo = {};
-                response.data.forEach(user => {
-                    userInfo[user.mid] = user;
+                            if (!hasMore) {
+                                this.endTs = null;
+                            }
+                            resolve();
+                        }).catch(err => {
+                            console.error("FetchUserInfo 捕获到的错误：", err);
+                            reject(err);
+                        });
+                    } else {
+                        console.error("请求错误：", response.message);
+                        reject(response.message);
+                    }
+                }).catch(err => {
+                    console.error("FetchSessionList 捕获到的错误：", err);
+                    reject(err);
                 });
-                return userInfo;
-            } else {
-                console.error("请求用户信息错误：", response.message);
-                return {};
-            }
+            });
+        },
+        FetchUserInfo(uids) {
+            return new Promise((resolve, reject) => {
+                const params = {
+                    'uids': uids.join(','),
+                    'build': 0,
+                    'mobi_app': 'web'
+                };
+                const queryString = Object.keys(params)
+                    .map(key => encodeURIComponent(key) + '=' + encodeURIComponent(params[key]))
+                    .join('&');
+                const url = `https://api.vc.bilibili.com/account/v1/user/cards?${queryString}`;
+                console.debug("用户信息列表url：", url);
+
+                this.$app.$def.bilirequest.SendBiliGET(url, "json").then(response => {
+                    console.debug("用户信息列表：", response);
+
+                    if (response.code === 0) {
+                        const userInfo = {};
+                        response.data.forEach(user => {
+                            userInfo[user.mid] = user;
+                        });
+                        resolve(userInfo);
+                    } else {
+                        console.error("请求用户信息错误：", response.message);
+                        reject(response.message);
+                    }
+                }).catch(err => {
+                    console.error("FetchUserInfo 捕获到的错误：", err);
+                    reject(err);
+                });
+            });
         },
         parseMessageContent(session) {
             const lastMsg = session.last_msg;
@@ -129,26 +142,11 @@ export default{
                    '不支持的消息类型';
         }
     },
-    onInit(){
-        this.FetchSessionList()
-        this.ifInterval = setInterval(() => {
-            if(this.hislist != null && this.hislist != undefined){
-                if(this.hislist.data.length < 1){
-                    prompt.showToast({
-                        message: "历史记录为空！！！",
-                        duration: 10000
-                    })
-                }
-                else if(this.hislist.data.length < 10){
-                    prompt.showToast({
-                        message: "历史记录内容较少，如果在一条正常的记录下发现接下来的所有记录全部没加载出来，就是没东西啦！",
-                        duration: 10000
-                    })
-                }
-                this.maxpn = Math.ceil(this.hislist.data.length / 10)
-                clearInterval(this.ifInterval)
-            }
-        },10000)
+    onInit() {
+        this.loading = true;
+        this.FetchSessionList().then(() => {
+            this.loading = false;
+        });
     }
 }
 </script>
@@ -159,6 +157,7 @@ export default{
     flex-direction: column;
     align-items: center;
     padding: 20px;
+    height: 100%; /* 设置高度为100% */
 }
 
 .content-container {
@@ -188,8 +187,8 @@ export default{
 .text-container {
     display: flex;
     flex-direction: column;
-    width: calc(100% - 65px);
-    /* 预留头像宽度和margin */
+    width: 100%; /* 修改为百分比宽度 */
+    padding-right: 65px; /* 预留头像宽度和margin */
 }
 
 .content_title {
@@ -201,16 +200,23 @@ export default{
     color: white;
     font-size: 14px;
     margin-top: 5px;
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
 }
 
+
 .pagecontrol {
     display: flex;
     flex-direction: row;
     align-items: center;
+    margin-top: 20px;
+    margin-bottom: 20px; /* 确保位于页面底部 */
+}
+
+.loading {
+    width: 50px;
+    height: 50px;
     margin-top: 20px;
 }
 </style>
